@@ -46,17 +46,35 @@ public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
 
   @Override
   public AccessToken getAccessToken() {
-    try {
-      com.google.auth.oauth2.AccessToken token = getCredentials().getAccessToken();
-      if (token == null || token.getExpirationTime().before(Date.from(Instant.now()))) {
-        refresh();
-        token = getCredentials().getAccessToken();
+    int maxRetries = 5;
+    long backoffMillis = 1000;
+
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        com.google.auth.oauth2.AccessToken token = getCredentials().getAccessToken();
+        if (token == null || token.getExpirationTime().before(Date.from(Instant.now()))) {
+          refresh();
+          token = getCredentials().getAccessToken();
+        }
+        return new AccessToken(token.getTokenValue(), token.getExpirationTime().getTime());
+      } catch (IOException e) {
+        if (attempt == maxRetries) {
+          throw ErrorUtils.getProgramFailureException(new ErrorCategory(ErrorCategoryEnum.PLUGIN),
+                                                      "Unable to get service account access token after retries.",
+                                                      e.getMessage(), ErrorType.UNKNOWN, true, e);
+        }
+        try {
+          Thread.sleep(backoffMillis);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          throw ErrorUtils.getProgramFailureException(new ErrorCategory(ErrorCategoryEnum.PLUGIN),
+                                                      "Retry interrupted while getting service account access token.",
+                                                      ie.getMessage(), ErrorType.UNKNOWN, true, ie);
+        }
+        backoffMillis *= 2;
       }
-      return new AccessToken(token.getTokenValue(), token.getExpirationTime().getTime());
-    } catch (IOException e) {
-      throw ErrorUtils.getProgramFailureException(new ErrorCategory(ErrorCategoryEnum.PLUGIN),
-        "Unable to get service account access token.", e.getMessage(), ErrorType.UNKNOWN, true, e);
     }
+    throw new RuntimeException("Unexpected error in getAccessToken retry loop.");
   }
 
   @Override

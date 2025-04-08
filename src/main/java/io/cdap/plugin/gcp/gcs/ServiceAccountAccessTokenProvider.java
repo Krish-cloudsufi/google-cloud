@@ -21,6 +21,8 @@ import com.google.auth.oauth2.GoogleCredentials;
 import com.google.bigtable.repackaged.com.google.gson.Gson;
 import com.google.cloud.hadoop.util.AccessTokenProvider;
 import com.google.cloud.hadoop.util.CredentialFactory;
+import dev.failsafe.Failsafe;
+import dev.failsafe.RetryPolicy;
 import io.cdap.cdap.api.exception.ErrorCategory;
 import io.cdap.cdap.api.exception.ErrorCategory.ErrorCategoryEnum;
 import io.cdap.cdap.api.exception.ErrorType;
@@ -29,6 +31,7 @@ import io.cdap.plugin.gcp.common.GCPUtils;
 import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 import java.util.stream.Collectors;
@@ -46,35 +49,22 @@ public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
 
   @Override
   public AccessToken getAccessToken() {
-    int maxRetries = 5;
-    long backoffMillis = 1000;
-
-    for (int attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        com.google.auth.oauth2.AccessToken token = getCredentials().getAccessToken();
-        if (token == null || token.getExpirationTime().before(Date.from(Instant.now()))) {
-          refresh();
-          token = getCredentials().getAccessToken();
-        }
-        return new AccessToken(token.getTokenValue(), token.getExpirationTime().getTime());
-      } catch (IOException e) {
-        if (attempt == maxRetries) {
-          throw ErrorUtils.getProgramFailureException(new ErrorCategory(ErrorCategoryEnum.PLUGIN),
-                                                      "Unable to get service account access token after retries.",
-                                                      e.getMessage(), ErrorType.UNKNOWN, true, e);
-        }
-        try {
-          Thread.sleep(backoffMillis);
-        } catch (InterruptedException ie) {
-          Thread.currentThread().interrupt();
-          throw ErrorUtils.getProgramFailureException(new ErrorCategory(ErrorCategoryEnum.PLUGIN),
-                                                      "Retry interrupted while getting service account access token.",
-                                                      ie.getMessage(), ErrorType.UNKNOWN, true, ie);
-        }
-        backoffMillis *= 2;
+    RetryPolicy<Object> retryPolicy = RetryPolicy.builder()
+      .handle(IOException.class)
+      .withBackoff(Duration.ofSeconds(1), Duration.ofSeconds(16))
+      .withMaxRetries(5)
+      .onRetry(e -> {
+        System.out.println("Retry attempt " + e.getAttemptCount() + " due to " + e.getLastException().getMessage());
+      })
+      .build();
+    return Failsafe.with(retryPolicy).get(() -> {
+      com.google.auth.oauth2.AccessToken token = getCredentials().getAccessToken();
+      if (token == null || token.getExpirationTime().before(Date.from(Instant.now()))) {
+        refresh();
+        token = getCredentials().getAccessToken();
       }
-    }
-    throw new RuntimeException("Unexpected error in getAccessToken retry loop.");
+      return new AccessToken(token.getTokenValue(), token.getExpirationTime().getTime());
+    });
   }
 
   @Override

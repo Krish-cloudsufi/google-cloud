@@ -29,6 +29,8 @@ import io.cdap.cdap.api.exception.ErrorType;
 import io.cdap.cdap.api.exception.ErrorUtils;
 import io.cdap.plugin.gcp.common.GCPUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -46,7 +48,7 @@ public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
   private Configuration conf;
   private GoogleCredentials credentials;
   private static final Gson GSON = new Gson();
-
+  private static final Logger logger = LoggerFactory.getLogger(ServiceAccountAccessTokenProvider.class);
   @Override
   public AccessToken getAccessToken() {
     RetryPolicy<Object> retryPolicy = RetryPolicy.builder()
@@ -54,7 +56,7 @@ public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
       .withBackoff(Duration.ofSeconds(1), Duration.ofSeconds(16))
       .withMaxRetries(5)
       .onRetry(e -> {
-        System.out.println("Retry attempt " + e.getAttemptCount() + " due to " + e.getLastException().getMessage());
+        logger.warn("Retry attempt {} due to {}", e.getAttemptCount(), e.getLastException().getMessage());
       })
       .build();
     try {

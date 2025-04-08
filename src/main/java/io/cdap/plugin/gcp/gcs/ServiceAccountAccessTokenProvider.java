@@ -57,14 +57,25 @@ public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
         System.out.println("Retry attempt " + e.getAttemptCount() + " due to " + e.getLastException().getMessage());
       })
       .build();
-    return Failsafe.with(retryPolicy).get(() -> {
-      com.google.auth.oauth2.AccessToken token = getCredentials().getAccessToken();
-      if (token == null || token.getExpirationTime().before(Date.from(Instant.now()))) {
-        refresh();
-        token = getCredentials().getAccessToken();
-      }
-      return new AccessToken(token.getTokenValue(), token.getExpirationTime().getTime());
-    });
+    try {
+      return Failsafe.with(retryPolicy).get(() -> {
+        com.google.auth.oauth2.AccessToken token = getCredentials().getAccessToken();
+        if (token == null || token.getExpirationTime().before(Date.from(Instant.now()))) {
+          refresh();
+          token = getCredentials().getAccessToken();
+        }
+        return new AccessToken(token.getTokenValue(), token.getExpirationTime().getTime());
+      });
+    } catch (Exception e) {
+      throw ErrorUtils.getProgramFailureException(
+        new ErrorCategory(ErrorCategoryEnum.PLUGIN),
+        "Unable to get service account access token after retries.",
+        e.getMessage(),
+        ErrorType.UNKNOWN,
+        true,
+        e
+      );
+    }
   }
 
   @Override

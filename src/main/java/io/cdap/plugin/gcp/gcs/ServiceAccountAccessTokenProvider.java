@@ -28,6 +28,7 @@ import io.cdap.cdap.api.exception.ErrorCategory.ErrorCategoryEnum;
 import io.cdap.cdap.api.exception.ErrorType;
 import io.cdap.cdap.api.exception.ErrorUtils;
 import io.cdap.plugin.gcp.common.GCPUtils;
+import io.cdap.plugin.gcp.common.ServerErrorException;
 import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,7 +53,7 @@ public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
   @Override
   public AccessToken getAccessToken() {
     RetryPolicy<Object> retryPolicy = RetryPolicy.builder()
-      .handle(IOException.class)
+      .handle(ServerErrorException.class)
       .withBackoff(Duration.ofSeconds(1), Duration.ofSeconds(16))
       .withMaxRetries(5)
       .onRetry(e -> {
@@ -61,10 +62,10 @@ public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
       .build();
     try {
       return Failsafe.with(retryPolicy).get(() -> {
-        com.google.auth.oauth2.AccessToken token = getCredentials().getAccessToken();
+        com.google.auth.oauth2.AccessToken token = safeGetAccessToken(); // <-- used here
         if (token == null || token.getExpirationTime().before(Date.from(Instant.now()))) {
           refresh();
-          token = getCredentials().getAccessToken();
+          token = safeGetAccessToken(); // <-- and used again here after refresh
         }
         return new AccessToken(token.getTokenValue(), token.getExpirationTime().getTime());
       });
@@ -80,14 +81,36 @@ public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
     }
   }
 
+  private boolean isServerError(IOException e) {
+    // Customize based on actual HTTP client or error content
+    String msg = e.getMessage();
+    return msg != null && msg.matches("(?s).*\\b(5\\d\\d)\\b.*"); // crude check for 5xx codes
+  }
+
+  private com.google.auth.oauth2.AccessToken safeGetAccessToken() throws IOException {
+    try {
+      return getCredentials().getAccessToken();
+    } catch (IOException e) {
+      // You might inspect the cause or message here if needed
+      if (isServerError(e)) {
+        throw new ServerErrorException(503, "Server error while fetching access token: " + e.getMessage());
+      }
+      throw e;
+    }
+  }
+
+
   @Override
   public void refresh() throws IOException {
     try {
       getCredentials().refresh();
     } catch (IOException e) {
+      if (isServerError(e)) {
+        throw new ServerErrorException(503, "Server error during refresh: " + e.getMessage());
+      }
       throw ErrorUtils.getProgramFailureException(new ErrorCategory(ErrorCategoryEnum.PLUGIN),
-        "Unable to refresh service account access token.", e.getMessage(),
-        ErrorType.UNKNOWN, true, e);
+                                                  "Unable to refresh service account access token.", e.getMessage(),
+                                                  ErrorType.UNKNOWN, true, e);
     }
   }
 

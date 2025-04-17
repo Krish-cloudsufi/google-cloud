@@ -71,6 +71,9 @@ public final class BigQuerySourceConfig extends BigQueryBaseConfig {
   public static final String NAME_ENABLE_QUERYING_VIEWS = "enableQueryingViews";
   public static final String NAME_VIEW_MATERIALIZATION_PROJECT = "viewMaterializationProject";
   public static final String NAME_VIEW_MATERIALIZATION_DATASET = "viewMaterializationDataset";
+  private static final String NAME_INITIAL_RETRY_DURATION = "initialRetryDuration";
+  private static final String NAME_MAX_RETRY_DURATION = "maxRetryDuration";
+  private static final String NAME_MAX_RETRY_COUNT= "retryMultiplier";
 
   @Name(Constants.Reference.REFERENCE_NAME)
   @Nullable
@@ -138,6 +141,24 @@ public final class BigQuerySourceConfig extends BigQueryBaseConfig {
   @Description("Timeout in seconds to read data from an established HTTP connection (Default value is 120).")
   private Integer readTimeout;
 
+  @Name(NAME_INITIAL_RETRY_DURATION)
+  @Description("Time taken for the first retry. Default is 1 seconds.")
+  @Nullable
+  @Macro
+  private Long initialRetryDuration;
+
+  @Name(NAME_MAX_RETRY_DURATION)
+  @Description("Maximum time in seconds retries can take. Default is 32 seconds.")
+  @Nullable
+  @Macro
+  private Long maxRetryDuration;
+
+  @Name(NAME_MAX_RETRY_COUNT)
+  @Description("Maximum number of retries allowed. Default is 5.")
+  @Nullable
+  @Macro
+  private Integer maxRetryCount;
+
   public String getTable() {
     return table;
   }
@@ -151,6 +172,21 @@ public final class BigQuerySourceConfig extends BigQueryBaseConfig {
 
   public int getReadTimeout() {
     return readTimeout == null ? GCPUtils.BQ_DEFAULT_READ_TIMEOUT_SECONDS : readTimeout;
+  }
+
+  @Nullable
+  public Long getInitialRetryDuration() {
+    return initialRetryDuration;
+  }
+
+  @Nullable
+  public Long getMaxRetryDuration() {
+    return maxRetryDuration;
+  }
+
+  @Nullable
+  public Integer getMaxRetryCount() {
+    return maxRetryCount;
   }
 
   public void validate(FailureCollector collector) {
@@ -186,6 +222,21 @@ public final class BigQuerySourceConfig extends BigQueryBaseConfig {
     }
     if (!containsMacro(NAME_CMEK_KEY)) {
       validateCmekKey(collector, arguments);
+    }
+
+    if (initialRetryDuration != null && initialRetryDuration <= 0) {
+      collector.addFailure("Initial retry duration must be greater than 0.", null)
+        .withConfigProperty(NAME_INITIAL_RETRY_DURATION);
+    }
+
+    if (maxRetryDuration != null && maxRetryDuration <= 0) {
+      collector.addFailure("Max retry duration must be greater than 0.", null)
+        .withConfigProperty(NAME_MAX_RETRY_DURATION);
+    }
+
+    if (maxRetryCount != null && maxRetryCount <= 0) {
+      collector.addFailure("Max retry count must be greater than 0.", null)
+        .withConfigProperty(NAME_MAX_RETRY_COUNT);
     }
   }
 
@@ -334,9 +385,14 @@ public final class BigQuerySourceConfig extends BigQueryBaseConfig {
   }
 
     private BigQuerySourceConfig(@Nullable BigQueryConnectorConfig connection, @Nullable String dataset,
-                                @Nullable String cmekKey, @Nullable String bucket, @Nullable String table) {
+                                @Nullable String cmekKey, @Nullable String bucket, @Nullable String table,
+                                 @Nullable Long initialRetryDuration, @Nullable Long maxRetryDuration,
+                                 @Nullable Integer maxRetryCount) {
       super(connection, dataset, cmekKey, bucket);
       this.table = table;
+      this.initialRetryDuration = initialRetryDuration;
+      this.maxRetryDuration = maxRetryDuration;
+      this.maxRetryCount = maxRetryCount;
     }
 
   public static Builder builder() {
@@ -352,6 +408,10 @@ public final class BigQuerySourceConfig extends BigQueryBaseConfig {
     private String cmekKey;
     private String bucket;
     private String table;
+    private Long initialRetryDuration;
+    private Long maxRetryDuration;
+    private Integer maxRetryCount;
+
 
     public Builder setConnection(@Nullable BigQueryConnectorConfig connection) {
       this.connection = connection;
@@ -378,8 +438,23 @@ public final class BigQuerySourceConfig extends BigQueryBaseConfig {
       return this;
     }
 
+    public Builder setInitialRetryDuration(@Nullable Long initialRetryDuration) {
+      this.initialRetryDuration = initialRetryDuration;
+      return this;
+    }
+
+    public Builder setMaxRetryDuration(@Nullable Long maxRetryDuration) {
+      this.maxRetryDuration = maxRetryDuration;
+      return this;
+    }
+
+    public Builder setMaxRetryCount(@Nullable Integer maxRetryCount) {
+      this.maxRetryCount = maxRetryCount;
+      return this;
+    }
+
     public BigQuerySourceConfig build() {
-      return new BigQuerySourceConfig(connection, dataset, cmekKey, bucket, table);
+      return new BigQuerySourceConfig(connection, dataset, cmekKey, bucket, table, initialRetryDuration, maxRetryDuration, maxRetryCount);
     }
   }
 }

@@ -27,6 +27,7 @@ import io.cdap.cdap.api.exception.ErrorCategory;
 import io.cdap.cdap.api.exception.ErrorCategory.ErrorCategoryEnum;
 import io.cdap.cdap.api.exception.ErrorType;
 import io.cdap.cdap.api.exception.ErrorUtils;
+import io.cdap.plugin.gcp.bigquery.source.BigQuerySourceConfig;
 import io.cdap.plugin.gcp.common.GCPUtils;
 import io.cdap.plugin.gcp.common.ServerErrorException;
 import org.apache.hadoop.conf.Configuration;
@@ -47,9 +48,16 @@ import java.util.stream.Stream;
  */
 public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
   private Configuration conf;
+  private BigQuerySourceConfig config;
   private GoogleCredentials credentials;
   private static final Gson GSON = new Gson();
   private static final Logger logger = LoggerFactory.getLogger(ServiceAccountAccessTokenProvider.class);
+
+  public void setConfig(BigQuerySourceConfig config) {
+    this.config = config;
+  }
+
+
   @Override
   public AccessToken getAccessToken() {
     RetryPolicy<Object> retryPolicy = RetryPolicy.builder()

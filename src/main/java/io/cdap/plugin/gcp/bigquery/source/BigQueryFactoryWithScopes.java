@@ -41,10 +41,9 @@ public class BigQueryFactoryWithScopes extends BigQueryFactory {
     this.scopes = scopes;
   }
 
-  @Override
-  public Credential createBigQueryCredential(Configuration config) throws GeneralSecurityException, IOException {
+  public Credential createBigQueryCredential(Configuration config, BigQuerySourceConfig pluginConfig) throws GeneralSecurityException, IOException {
     Credential credential =
-        CredentialFromAccessTokenProviderClassFactory.credential(getAccessTokenProvider(config),
+        CredentialFromAccessTokenProviderClassFactory.credential(getAccessTokenProvider(config, pluginConfig),
             scopes);
     if (credential != null) {
       return credential;
@@ -62,9 +61,10 @@ public class BigQueryFactoryWithScopes extends BigQueryFactory {
    * @param config Hadoop {@link Configuration}
    * @return {@link ServiceAccountAccessTokenProvider}
    */
-  private AccessTokenProvider getAccessTokenProvider(Configuration config) {
-    AccessTokenProvider accessTokenProvider = new ServiceAccountAccessTokenProvider();
+  private AccessTokenProvider getAccessTokenProvider(Configuration config, BigQuerySourceConfig pluginConfig) {
+    ServiceAccountAccessTokenProvider accessTokenProvider = new ServiceAccountAccessTokenProvider();
     accessTokenProvider.setConf(config);
+    accessTokenProvider.setConfig(pluginConfig);
     return accessTokenProvider;
   }
 }

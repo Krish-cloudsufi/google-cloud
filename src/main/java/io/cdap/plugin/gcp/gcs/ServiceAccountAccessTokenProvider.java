@@ -57,6 +57,9 @@ public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
     this.config = config;
   }
 
+  public BigQuerySourceConfig getConfig(BigQuerySourceConfig config) {
+    return config;
+  }
 
   @Override
   public AccessToken getAccessToken() {

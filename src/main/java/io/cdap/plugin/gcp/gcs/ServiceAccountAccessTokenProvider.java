@@ -21,14 +21,21 @@ import com.google.auth.oauth2.GoogleCredentials;
 import com.google.bigtable.repackaged.com.google.gson.Gson;
 import com.google.cloud.hadoop.util.AccessTokenProvider;
 import com.google.cloud.hadoop.util.CredentialFactory;
+import dev.failsafe.Failsafe;
+import dev.failsafe.RetryPolicy;
 import io.cdap.cdap.api.exception.ErrorCategory;
 import io.cdap.cdap.api.exception.ErrorCategory.ErrorCategoryEnum;
 import io.cdap.cdap.api.exception.ErrorType;
 import io.cdap.cdap.api.exception.ErrorUtils;
+import io.cdap.plugin.gcp.bigquery.source.BigQuerySourceConfig;
 import io.cdap.plugin.gcp.common.GCPUtils;
+import io.cdap.plugin.gcp.common.ServerErrorException;
 import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 import java.util.stream.Collectors;
@@ -41,32 +48,80 @@ import java.util.stream.Stream;
  */
 public class ServiceAccountAccessTokenProvider implements AccessTokenProvider {
   private Configuration conf;
+  private BigQuerySourceConfig config;
   private GoogleCredentials credentials;
   private static final Gson GSON = new Gson();
+  private static final Logger logger = LoggerFactory.getLogger(ServiceAccountAccessTokenProvider.class);
+
+  public void setConfig(BigQuerySourceConfig config) {
+    this.config = config;
+  }
+
+  public BigQuerySourceConfig getConfig(BigQuerySourceConfig config) {
+    return config;
+  }
 
   @Override
   public AccessToken getAccessToken() {
+    RetryPolicy<Object> retryPolicy = RetryPolicy.builder()
+      .handle(ServerErrorException.class)
+      .withBackoff(Duration.ofSeconds(1), Duration.ofSeconds(16))
+      .withMaxRetries(5)
+      .onRetry(e -> {
+        logger.warn("Retry attempt {} due to {}", e.getAttemptCount(), e.getLastException().getMessage());
+      })
+      .build();
     try {
-      com.google.auth.oauth2.AccessToken token = getCredentials().getAccessToken();
-      if (token == null || token.getExpirationTime().before(Date.from(Instant.now()))) {
-        refresh();
-        token = getCredentials().getAccessToken();
-      }
-      return new AccessToken(token.getTokenValue(), token.getExpirationTime().getTime());
-    } catch (IOException e) {
-      throw ErrorUtils.getProgramFailureException(new ErrorCategory(ErrorCategoryEnum.PLUGIN),
-        "Unable to get service account access token.", e.getMessage(), ErrorType.UNKNOWN, true, e);
+      return Failsafe.with(retryPolicy).get(() -> {
+        com.google.auth.oauth2.AccessToken token = safeGetAccessToken(); // <-- used here
+        if (token == null || token.getExpirationTime().before(Date.from(Instant.now()))) {
+          refresh();
+          token = safeGetAccessToken(); // <-- and used again here after refresh
+        }
+        return new AccessToken(token.getTokenValue(), token.getExpirationTime().getTime());
+      });
+    } catch (Exception e) {
+      throw ErrorUtils.getProgramFailureException(
+        new ErrorCategory(ErrorCategoryEnum.PLUGIN),
+        "Unable to get service account access token after retries.",
+        e.getMessage(),
+        ErrorType.UNKNOWN,
+        true,
+        e
+      );
     }
   }
+
+  private boolean isServerError(IOException e) {
+    // Customize based on actual HTTP client or error content
+    String msg = e.getMessage();
+    return msg != null && msg.matches("(?s).*\\b(5\\d\\d)\\b.*"); // crude check for 5xx codes
+  }
+
+  private com.google.auth.oauth2.AccessToken safeGetAccessToken() throws IOException {
+    try {
+      return getCredentials().getAccessToken();
+    } catch (IOException e) {
+      // You might inspect the cause or message here if needed
+      if (isServerError(e)) {
+        throw new ServerErrorException(503, "Server error while fetching access token: " + e.getMessage());
+      }
+      throw e;
+    }
+  }
+
 
   @Override
   public void refresh() throws IOException {
     try {
       getCredentials().refresh();
     } catch (IOException e) {
+      if (isServerError(e)) {
+        throw new ServerErrorException(503, "Server error during refresh: " + e.getMessage());
+      }
       throw ErrorUtils.getProgramFailureException(new ErrorCategory(ErrorCategoryEnum.PLUGIN),
-        "Unable to refresh service account access token.", e.getMessage(),
-        ErrorType.UNKNOWN, true, e);
+                                                  "Unable to refresh service account access token.", e.getMessage(),
+                                                  ErrorType.UNKNOWN, true, e);
     }
   }
 
